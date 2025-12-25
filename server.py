@@ -4,15 +4,14 @@ import logging
 from flask import Flask, request, jsonify
 import google.generativeai as genai
 
-# --- ده السطر اللي السيرفر مش لاقيه وعامل المشكلة ---
+# ==========================================
+# ده التعديل الضروري (بداية تعريف السيرفر)
 app = Flask(__name__)
-# --------------------------------------------------
+# ==========================================
 
-# إعداد الـ Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# إعداد مفتاح جوجل
 api_key = os.getenv("GOOGLE_API_KEY")
 if not api_key:
     logger.error("❌ GOOGLE_API_KEY not found!")
@@ -27,7 +26,7 @@ def generate_with_retry(prompt_text):
         try:
             response = model.generate_content(prompt_text)
             if response.text:
-                time.sleep(4)  # حل مشكلة الـ Quota
+                time.sleep(4)
                 return response.text
         except Exception as e:
             if "429" in str(e):
@@ -43,9 +42,7 @@ def index():
     
     try:
         data = request.json
-        # استقبال النص بأي اسم محتمل
         user_prompt = data.get('text') or data.get('prompt') or data.get('content')
-        
         if not user_prompt:
             return jsonify({"error": "No text provided"}), 400
             
@@ -55,5 +52,4 @@ def index():
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
-    # تشغيل السيرفر
     app.run(host='0.0.0.0', port=10000)
