@@ -20,81 +20,80 @@ else:
 
 model = genai.GenerativeModel('gemini-1.5-flash')
 
-def generate_from_text(prompt_text):
-    """ معالجة النصوص العادية """
+def process_audio(file_path):
+    """رفع وتحليل ملف الصوت"""
     try:
-        response = model.generate_content(prompt_text)
-        return response.text if response.text else "No response generated."
+        logger.info("🎤 Uploading file to Gemini...")
+        # رفع الملف لسيرفرات جوجل
+        audio_file = genai.upload_file(file_path)
+        
+        # انتظار المعالجة (مهم جداً للصوت)
+        while audio_file.state.name == "PROCESSING":
+            time.sleep(1)
+            audio_file = genai.get_file(audio_file.name)
+
+        if audio_file.state.name == "FAILED":
+            return "Audio processing failed."
+
+        logger.info("🧠 Generating transcription...")
+        # طلب التفريغ النصي
+        response = model.generate_content([
+            "Transcribe this audio file exactly as spoken. Do not add timestamps. Just the text.", 
+            audio_file
+        ])
+        
+        return response.text if response.text else "No speech detected."
     except Exception as e:
-        return f"Error: {str(e)}"
+        return f"Gemini Error: {str(e)}"
 
-def process_audio_file(file_storage):
-    """ معالجة ملفات الصوت باستخدام Gemini """
-    try:
-        # 1. حفظ الملف مؤقتاً
-        suffix = os.path.splitext(file_storage.filename)[1] # .mp3
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
-            file_storage.save(temp_file.name)
-            temp_path = temp_file.name
-
-        logger.info(f"🎤 Processing audio file: {file_storage.filename}")
-
-        # 2. رفع الملف لـ Gemini
-        myfile = genai.upload_file(temp_path)
-        
-        # 3. الطلب من Gemini تحليل الصوت
-        # (يمكنك تعديل البرومبت هنا حسب رغبتك: ترجمة، تلخيص، تفريغ)
-        response = model.generate_content(["Please transcribe this audio file accurately.", myfile])
-        
-        # 4. تنظيف الملفات
-        os.remove(temp_path)
-        
-        return response.text if response.text else "No transcription generated."
-
-    except Exception as e:
-        logger.error(f"❌ Audio Error: {str(e)}")
-        return f"Audio processing error: {str(e)}"
-
-# --- الجوكر: دالة ترد على أي رابط وأي نوع بيانات ---
+# --- الجوكر: دالة تستقبل أي نوع بيانات ---
 @app.route('/', defaults={'path': ''}, methods=['POST', 'GET'])
 @app.route('/<path:path>', methods=['POST', 'GET'])
 def catch_all(path):
-    logger.info(f"📥 Request to path: /{path}")
-
     if request.method == 'GET':
-        return jsonify({"status": "Server Running", "path": path})
+        return jsonify({"status": "Server is Live 🚀"})
 
     try:
-        # الحالة 1: استلام ملف (MP3/WAV)
+        logger.info(f"📥 Incoming Request. Content-Type: {request.content_type}")
+
+        # 1. الأولوية للملفات (علاج مشكلة 415)
         if request.files:
-            # هات أول ملف مبعوت
-            file = next(iter(request.files.values()))
-            if file:
-                logger.info("📁 File received!")
-                result = process_audio_file(file)
+            uploaded_file = next(iter(request.files.values())) # هات أول ملف
+            if uploaded_file.filename != '':
+                # حفظ الملف مؤقتاً
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as temp:
+                    uploaded_file.save(temp.name)
+                    temp_path = temp.name
+                
+                # معالجة الصوت
+                result = process_audio(temp_path)
+                
+                # تنظيف
+                os.remove(temp_path)
                 return jsonify({"response": result, "status": "success"})
 
-        # الحالة 2: استلام JSON (نص)
-        if request.is_json:
-            data = request.json
-            user_prompt = data.get('text') or data.get('prompt') or data.get('content')
-            if user_prompt:
-                logger.info("📝 Text received!")
-                result = generate_from_text(user_prompt)
-                return jsonify({"response": result, "status": "success"})
+        # 2. لو مفيش ملف، نجرب نقرأ النص (Form Data)
+        user_prompt = request.form.get('text') or request.form.get('prompt')
+        
+        # 3. لو مفيش Form، نجرب JSON (بحرص)
+        if not user_prompt:
+            json_data = request.get_json(silent=True) # silent=True بيمنع الانهيار
+            if json_data:
+                user_prompt = json_data.get('text') or json_data.get('prompt')
 
-        # حالة احتياطية: لو البيانات مبعوطة Form Data مش JSON
-        if request.form:
-            user_prompt = request.form.get('text') or request.form.get('prompt')
-            if user_prompt:
-                result = generate_from_text(user_prompt)
-                return jsonify({"response": result, "status": "success"})
+        # 4. التنفيذ
+        if user_prompt:
+            logger.info(f"📝 Text received: {user_prompt[:50]}...")
+            response = model.generate_content(user_prompt)
+            return jsonify({"response": response.text})
 
-        return jsonify({"response": "Connected but no content found", "status": "success"})
+        # لو وصلنا هنا يبقى مفيش داتا مفهومة
+        return jsonify({"response": "Connected, but no audio or text found.", "status": "success"})
 
     except Exception as e:
         logger.error(f"❌ Critical Error: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+        # ارجع JSON دايماً عشان الإضافة متضربش
+        return jsonify({"error": str(e), "response": "Server Error"}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 10000))
