@@ -1,76 +1,81 @@
 import os
 import time
-from flask import Flask, request, jsonify
-from flask_cors import CORS
 import google.generativeai as genai
+import logging
 
-app = Flask(__name__)
-CORS(app)
+# إعداد الـ Logging عشان تشوف الأخطاء في الـ Console بتاع Render
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-MY_GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
-genai.configure(api_key=MY_GOOGLE_API_KEY)
+# 1. قراءة المفتاح من Environment Variables
+# تأكدنا من الصورة إن الاسم عندك هو GOOGLE_API_KEY
+api_key = os.getenv("GOOGLE_API_KEY")
 
-VALID_LICENSES = {
-    "AUTOCUT-PRO-2025": {"active": True, "plan": "pro"},
-    "TEST-USER": {"active": True, "plan": "trial"}
-}
+# التحقق من وجود المفتاح
+if not api_key:
+    logger.error("❌ Error: GOOGLE_API_KEY not found! Please add it to Render Environment Variables.")
+    # يمكن هنا رفع خطأ أو التعامل معه حسب الرغبة
+    # raise ValueError("API Key not found")
+else:
+    # 2. تهيئة مكتبة Gemini
+    genai.configure(api_key=api_key)
 
-@app.route('/login', methods=['POST'])
-def login():
-    data = request.json
-    license_code = data.get('license_code')
-    if license_code in VALID_LICENSES:
-        return jsonify({"status": "success", "message": "Login Successful"})
-    else:
-        return jsonify({"status": "error", "message": "Invalid License"})
+# 3. إعداد الموديل (تأكد إن ده الموديل اللي انت عاوز تستخدمه)
+# الموديلات المتاحة: 'gemini-1.5-flash', 'gemini-pro'
+MODEL_NAME = 'gemini-1.5-flash' 
+model = genai.GenerativeModel(MODEL_NAME)
 
-@app.route('/analyze', methods=['POST'])
-def analyze():
-    # التحقق من الرخصة
-    license_code = request.form.get('license')
-    if license_code not in VALID_LICENSES:
-        return jsonify({"status": "error", "message": "Unauthorized"})
-
-    if 'file' not in request.files:
-        return jsonify({"status": "error", "message": "No file uploaded"})
+def generate_with_retry(prompt_text, retries=3, delay=4):
+    """
+    دالة كاملة لإرسال الطلب لـ Gemini مع معالجة أخطاء الـ Quota 429
     
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({"status": "error", "message": "No file selected"})
+    Args:
+        prompt_text (str): النص أو البرومبت اللي هتبعاته
+        retries (int): عدد محاولات الإعادة في حالة الفشل (الافتراضي 3)
+        delay (int): عدد الثواني للانتظار بين الطلبات لتفادي الحظر (الافتراضي 4)
+    
+    Returns:
+        str: النص الرد من الذكاء الاصطناعي أو None في حالة الفشل
+    """
+    
+    for attempt in range(retries):
+        try:
+            logger.info(f"📤 Sending request to Gemini (Attempt {attempt + 1}/{retries})...")
+            
+            # إرسال الطلب
+            response = model.generate_content(prompt_text)
+            
+            # التأكد من وصول رد سليم
+            if response.text:
+                logger.info("✅ Success: Received response from Gemini.")
+                
+                # --- النقطة الجوهرية لحل مشكلتك ---
+                # الانتظار الإجباري عشان منعديش الـ Rate Limit (15 طلب في الدقيقة)
+                time.sleep(delay) 
+                
+                return response.text
+            
+        except Exception as e:
+            error_msg = str(e)
+            
+            # لو الخطأ هو 429 (تجاوزت الحد المسموح)
+            if "429" in error_msg:
+                wait_time = 20 # استنى 20 ثانية لو السيرفر قالك وقف
+                logger.warning(f"⚠️ Quota Exceeded (429). Cooling down for {wait_time} seconds...")
+                time.sleep(wait_time)
+            else:
+                # لو خطأ تاني (نت مثلاً)، استنى وقت قصير وجرب تاني
+                logger.error(f"❌ Error occurred: {error_msg}")
+                time.sleep(2) # استنى ثانيتين بس
+                
+    logger.error("❌ Failed to generate content after all retries.")
+    return None
 
-    try:
-        temp_filename = "temp_audio.mp3"
-        file.save(temp_filename)
+# --- مثال: كيف تستخدم هذا الكود في مشروعك ---
+# (الجزء ده للتوضيح، انت هتستخدم الدالة generate_with_retry جوه اللوب بتاعك)
 
-        print("Uploading to Gemini...")
-        uploaded_file = genai.upload_file(path=temp_filename, display_name="User Audio")
-        
-        # انتظار المعالجة
-        while uploaded_file.state.name == "PROCESSING":
-            time.sleep(1)
-            uploaded_file = genai.get_file(uploaded_file.name)
-
-        if uploaded_file.state.name == "FAILED":
-             return jsonify({"status": "error", "message": "Google AI failed processing"})
-
-        # --- التعديل هنا ---
-        # اخترنا موديل موجود في قائمتك بالتحديد
-        model = genai.GenerativeModel('gemini-2.0-flash') 
-        
-        prompt = """
-        Transcribe this audio into Arabic (Egypt) and format it strictly as SRT.
-        Output ONLY the SRT content. No markdown.
-        """
-        
-        response = model.generate_content([prompt, uploaded_file])
-        final_srt = response.text.replace("```srt", "").replace("```", "").strip()
-
-        os.remove(temp_filename)
-        return jsonify({"status": "success", "srt_content": final_srt})
-
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)})
-
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
+if __name__ == "__main__":
+    # تجربة بسيطة
+    test_prompt = "Say hello in Arabic"
+    result = generate_with_retry(test_prompt)
+    print(f"Result: {result}")
