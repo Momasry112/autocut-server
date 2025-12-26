@@ -9,17 +9,20 @@ app = Flask(__name__)
 api_key = os.getenv("GOOGLE_API_KEY")
 if api_key:
     genai.configure(api_key=api_key)
-    # بعد تحديث المكتبة، الاسم ده هيشتغل تمام
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    
+    # --- التعديل السحري هنا ---
+    # غيرنا الاسم للصيغة الرسمية اللي بتشتغل مع المكتبات كلها
+    model = genai.GenerativeModel('gemini-1.5-flash-001')
 
 @app.route('/', defaults={'path': ''}, methods=['POST', 'GET'])
 @app.route('/<path:path>', methods=['POST', 'GET'])
 def handle_request(path):
+    # لو مجرد فتح للموقع
     if request.method == 'GET':
         return jsonify({"status": "Server is Running 🚀"})
 
     try:
-        # 1. استقبال ملف الصوت
+        # استقبال الملفات (زي ما AutoCut بيبعتها)
         if request.files:
             file = next(iter(request.files.values()))
             if file.filename == '':
@@ -46,8 +49,8 @@ def handle_request(path):
             
             return jsonify({"response": result_text})
 
-        # 2. لو مفيش ملف
-        return jsonify({"response": "Connected! Please upload an audio file."})
+        # لو مفيش ملف
+        return jsonify({"response": "Connected! Ready for AutoCut."})
 
     except Exception as e:
         print(f"❌ Error: {e}")
