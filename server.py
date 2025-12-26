@@ -11,7 +11,7 @@ if api_key:
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel('gemini-1.5-flash')
 
-# --- التصحيح هنا: خلينا path=None عشان لو مفيش مسار ميضربش ---
+# --- التصحيح: ضفنا defaults={'path': ''} عشان السيرفر ميعطلش ---
 @app.route('/', defaults={'path': ''}, methods=['POST', 'GET'])
 @app.route('/<path:path>', methods=['POST', 'GET'])
 def handle_request(path):
@@ -20,7 +20,7 @@ def handle_request(path):
         return jsonify({"status": "Server is Running 🚀"})
 
     try:
-        # 1. استلام ملف الصوت
+        # 1. استقبال ملف الصوت
         if request.files:
             file = next(iter(request.files.values()))
             if file.filename == '':
