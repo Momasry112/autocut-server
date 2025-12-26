@@ -19,7 +19,7 @@ def handle_request(path):
         return jsonify({"status": "Server is Running 🚀"})
 
     try:
-        # 1. استقبال ملف الصوت (الأولوية هنا)
+        # 1. استقبال ملف الصوت
         if request.files:
             file = next(iter(request.files.values()))
             if file.filename == '':
@@ -39,7 +39,6 @@ def handle_request(path):
                 response = model.generate_content(["Transcribe this audio file to text.", myfile])
                 result_text = response.text if response.text else "No text found."
             except Exception as e:
-                # لو حصل خطأ في الموديل نرجعه عشان نشوفه
                 result_text = f"Gemini Error: {str(e)}"
             finally:
                 if os.path.exists(temp_path):
