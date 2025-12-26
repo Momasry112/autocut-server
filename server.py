@@ -1,5 +1,4 @@
 import os
-import tempfile
 from flask import Flask, request, jsonify
 import google.generativeai as genai
 
@@ -7,51 +6,33 @@ app = Flask(__name__)
 
 # إعداد مفتاح جوجل
 api_key = os.getenv("GOOGLE_API_KEY")
-if api_key:
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-1.5-flash')
+genai.configure(api_key=api_key)
+model = genai.GenerativeModel('gemini-1.5-flash')
 
-# --- التصحيح: ضفنا defaults={'path': ''} عشان السيرفر ميعطلش ---
-@app.route('/', defaults={'path': ''}, methods=['POST', 'GET'])
-@app.route('/<path:path>', methods=['POST', 'GET'])
-def handle_request(path):
-    # لو مجرد فتح للموقع
+@app.route('/', methods=['POST', 'GET'])
+def index():
+    # لو فتحت الرابط في المتصفح
     if request.method == 'GET':
-        return jsonify({"status": "Server is Running 🚀"})
+        return jsonify({"status": "Server is Running (Text Mode) 🟢"})
 
     try:
-        # 1. استقبال ملف الصوت
-        if request.files:
-            file = next(iter(request.files.values()))
-            if file.filename == '':
-                return jsonify({"error": "No selected file"}), 400
-
-            # حفظ مؤقت
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as temp:
-                file.save(temp.name)
-                temp_path = temp.name
-
-            # رفع وتحليل
-            try:
-                print(f"🎤 Processing audio...")
-                myfile = genai.upload_file(temp_path)
-                
-                # الأمر اللي رايح لجوجل
-                response = model.generate_content(["Transcribe this audio to text.", myfile])
-                result_text = response.text if response.text else "No text found."
-            except Exception as e:
-                result_text = f"Gemini Error: {str(e)}"
-            finally:
-                if os.path.exists(temp_path):
-                    os.remove(temp_path)
+        # استقبال البيانات كـ JSON
+        data = request.get_json(silent=True)
+        
+        if not data:
+            return jsonify({"error": "No data received"}), 400
             
-            return jsonify({"response": result_text})
+        user_text = data.get('text')
+        
+        if not user_text:
+            return jsonify({"response": "Connected! Write something to analyze."})
 
-        # 2. لو مفيش ملف
-        return jsonify({"response": "Connected! Please upload an audio file."})
+        # إرسال النص لـ Gemini
+        print(f"📩 Received: {user_text}")
+        response = model.generate_content(user_text)
+        return jsonify({"response": response.text})
 
     except Exception as e:
-        print(f"❌ Error: {e}")
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
